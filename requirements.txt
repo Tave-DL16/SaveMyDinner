@@ -4,6 +4,8 @@ paddleocr
 opencv-python
 Pillow
 numpy
+torch
+transformers
 openai
 python-dotenv
 google-api-python-client
