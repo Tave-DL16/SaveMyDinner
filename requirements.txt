@@ -1,0 +1,10 @@
+ultralytics
+paddlepaddle==3.2.2 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/\
+paddleocr
+opencv-python
+Pillow
+numpy
+openai
+python-dotenv
+google-api-python-client
+youtube_transcript_api
