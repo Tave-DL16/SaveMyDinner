@@ -1,4 +1,5 @@
 #예시 파일 입니다
+# (혜교) - 통합 파이프라인 구축 과정에서 더이상 사용되지 않음. 삭제 가능한 파일
 
 from __future__ import annotations
 

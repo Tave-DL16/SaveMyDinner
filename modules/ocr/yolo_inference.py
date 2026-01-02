@@ -4,6 +4,22 @@ from PIL import Image
 from pathlib import Path
 from ultralytics import YOLO
 
+# 영어 -> 한국어 식자재
+INGREDIENT_TRANSLATION = {
+    'chilli': '고추',
+    'greenonion': '대파',
+    'garlic': '마늘',
+    'carrot': '당근',
+    'Onion_peel': '양파',
+    'Onion_bag': '양파',
+    'onion': '양파',
+    'radish': '무',
+    'Radish': '무',
+    'potato': '감자',
+    'green_onion': '대파',
+    'green onion': '대파',
+}
+
 
 def load_image(image_path: Path) -> Image.Image:
     """이미지 업로드 함수"""
@@ -13,7 +29,7 @@ def load_image(image_path: Path) -> Image.Image:
 
 
 def check_conf(data):
-    """신뢰도 0.6 이상의 식자재만 인식하는 함수"""       
+    """신뢰도 0.6 이상의 식자재만 인식하는 함수 + 한글 변환"""
     item_list = []
     for _ , values in data.items():
         if not values:
@@ -22,9 +38,11 @@ def check_conf(data):
 
         for value in values:
             conf = value.get("confidence") if isinstance(value, dict) else None
-            mask =value.get("class_name")
+            mask = value.get("class_name")
             if conf >= 0.6:
-                item_list.append(mask)
+                # 영어 -> 한글 변환
+                korean_name = INGREDIENT_TRANSLATION.get(mask, mask)
+                item_list.append(korean_name)
     return item_list
 
 

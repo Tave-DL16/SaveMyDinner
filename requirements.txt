@@ -10,6 +10,10 @@ numpy
 # LLM & ML
 torch
 transformers
+sentence-transformers
+
+# VectorDB
+chromadb
 
 # API & 검색
 openai
