@@ -95,6 +95,8 @@ def clean_ocr_with_llm(
     model_name: str = "Qwen/Qwen3-1.7B",
     max_new_tokens: int = 2048,
 ) -> List[str]:
+    print(f"   LLM 입력 ({len(ocr_list)}개 텍스트): {ocr_list[:20]}...")  # 처음 20개만
+
     tokenizer, model = _load_model(model_name)
     prompt = _build_prompt(ocr_list)
     messages = [{"role": "user", "content": prompt}]
@@ -117,4 +119,9 @@ def clean_ocr_with_llm(
         index = 0
 
     content = tokenizer.decode(output_ids[index:], skip_special_tokens=True).strip("\n")
-    return _extract_list(content)
+    print(f"   LLM 원본 출력: {content}")
+
+    result = _extract_list(content)
+    print(f"   LLM 파싱 결과: {result}")
+
+    return result

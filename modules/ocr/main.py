@@ -45,13 +45,36 @@ def run_ocr_pipeline(
     Returns:
         식자재 이름 리스트
     """
+    print(f"\n{'='*50}")
+    print(f"OCR Pipeline 시작: {image_path.name}")
+    print(f"{'='*50}")
+
+    # 1. PaddleOCR로 텍스트 추출
+    print("\n[1단계] PaddleOCR 텍스트 추출 중...")
     ocr = PaddleOCR(lang="korean", use_angle_cls=True)
     raw_texts = run_ocr_with_rotations(ocr, image_path, rotations=rotations)
-    llm_items = clean_ocr_with_llm(raw_texts, model_name=model_name)
+    print(f"   → OCR 원본 결과 ({len(raw_texts)}개): {raw_texts[:10]}...")  # 처음 10개만
 
+    # 2. LLM 후처리
+    print("\n[2단계] LLM 후처리 중...")
+    llm_items = clean_ocr_with_llm(raw_texts, model_name=model_name)
+    print(f"   → LLM 후처리 결과 ({len(llm_items)}개): {llm_items}")
+
+    # 3. YOLO 처리
     if yolo_weights is None:
+        print("\n[3단계] YOLO 가중치 없음 - OCR 결과만 반환")
+        print(f"\n최종 결과: {llm_items}")
         return llm_items
 
+    print("\n[3단계] YOLO 객체 감지 중...")
     image = load_image(image_path)
     yolo_items = run_yolo(image, str(yolo_weights))
-    return _dedupe_keep_order([*yolo_items, *llm_items])
+    print(f"   → YOLO 결과 ({len(yolo_items)}개): {yolo_items}")
+
+    # 4. 결과 합치기
+    final_result = _dedupe_keep_order([*yolo_items, *llm_items])
+    print(f"\n[4단계] YOLO + OCR 통합")
+    print(f"   → 최종 결과 ({len(final_result)}개): {final_result}")
+    print(f"{'='*50}\n")
+
+    return final_result
