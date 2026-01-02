@@ -2,7 +2,17 @@
 modules.UI.streamlit_app의 Docstring
 김수민
 스트림릿
+
+[구조 설명]
+- 이 파일은 UI 로직만 담당하며, 실제 데이터 처리는 'services.py'에 위임합니다.
+- 현재는 UI 테스트를 위해 Mock 데이터를 사용 중입니다.
+
+[백엔드 통합 가이드]
+실제 모듈(OCR, 검색 등) 연결 방법은 'services.py' 파일 상단의 주석을 확인해주세요.
+(이 파일은 수정할 필요가 없습니다!)
+
 """
+
 import streamlit as st
 from typing import Any, Optional, List, Dict
 
