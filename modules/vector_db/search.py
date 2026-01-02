@@ -6,23 +6,46 @@ modules.vector_db.search
 import chromadb
 import json
 import re
-from sentence_transformers import SentenceTransformer
+import os
+from openai import OpenAI
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class RecipeSearcher:
     def __init__(self, db_path="./modules/vector_db/vectordb_recipes"):
         """
-        초기화: 로컬 임베딩 모델 로드 및 ChromaDB 연결
+        초기화: 로컬 임베딩 모델 로드 및 ChromaDB 연결 ->
+        초기화: OpenAI 임베딩 모델 및 ChromaDB 연결 로 수정
         """
-        # 1. HuggingFace의 한국어 특화 모델 (768차원)
-        self.model = SentenceTransformer('jhgan/ko-sroberta-multitask')
+
+        # # 1. HuggingFace의 한국어 특화 모델 (768차원)
+        # self.model = SentenceTransformer('jhgan/ko-sroberta-multitask')
         
+        # 1. OpenAI 클라이언트 (1536차원)
+        api_key = os.getenv('OPENAI_API_KEY')
+        if api_key:
+            self.openai_client = OpenAI(api_key=api_key)
+        else:
+            print("⚠️ OPENAI_API_KEY not found - VectorDB search will be limited")
+            self.openai_client = None
+
         # 2. ChromaDB 클라이언트 연결
         self.client = chromadb.PersistentClient(path=db_path)
         
         # 3. 컬렉션 로드
         try:
-            self.collection = self.client.get_collection(name="recipes_local_cosine")
-            print(f"✅ 'recipes_local_cosine' 컬렉션 로드 완료. (데이터: {self.collection.count()}개)")
+            #(밑으로 내림)
+            # self.collection = self.client.get_collection(name="recipes_local_cosine")
+            # print(f"✅ 'recipes_local_cosine' 컬렉션 로드 완료. (데이터: {self.collection.count()}개)")
+            # 먼저 recipes_1000 시도 (temp 데이터)
+            try:
+                self.collection = self.client.get_collection(name="recipes_1000")
+                print(f"✅ 'recipes_1000' 컬렉션 로드 완료. (데이터: {self.collection.count()}개)")
+            except:
+                # 없으면 recipes_local_cosine 시도 (기존 이름)
+                self.collection = self.client.get_collection(name="recipes_local_cosine")
+                print(f"✅ 'recipes_local_cosine' 컬렉션 로드 완료. (데이터: {self.collection.count()}개)")
         except Exception as e:
             print(f"❌ 컬렉션 로드 실패: {e}")
 
@@ -69,12 +92,35 @@ class RecipeSearcher:
                 return True
         return False
 
+    def get_embedding(self, text: str) -> list:
+        """OpenAI API로 임베딩 생성"""
+        if self.openai_client is None:
+            return None
+
+        try:
+            response = self.openai_client.embeddings.create(
+                model="text-embedding-3-small",
+                input=text
+            )
+            return response.data[0].embedding
+        except Exception as e:
+            print(f"임베딩 생성 실패: {e}")
+            return None
+
     def hybrid_search(self, user_ingredients, n_results=5):
         """
         벡터 유사도(60%) + 키워드 매칭(40%) + 자취생용 다양성 필터
         """
-        query_text = " ".join(user_ingredients)
-        query_vector = self.model.encode(query_text).tolist()
+        # query_text = " ".join(user_ingredients)
+        # query_vector = self.model.encode(query_text).tolist()
+        # DB 구축 시 사용한 형식과 동일하게 쿼리 생성
+        ingredients_text = ", ".join(user_ingredients)
+        query_text = f"재료: {ingredients_text}. 이 재료들로 만들 수 있는 요리를 찾아주세요."
+        query_vector = self.get_embedding(query_text)
+
+        if query_vector is None:
+            print("⚠️ 임베딩 생성 실패, 빈 결과 반환")
+            return []
         
         # 중복을 걸러내고도 5개를 채우기 위해 충분한 후보(75개) 추출
         results = self.collection.query(
