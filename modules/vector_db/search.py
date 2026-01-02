@@ -1,10 +1,11 @@
 """
-modules.vector_db.search의 Docstring
-추윤서
-# 벡터 DB 유사도 검색 → 요리명
+modules.vector_db.search
+작성자: 추윤서
+기능: 자취생/1인 가구 맞춤형 레시피 정제 및 중복 제거 검색 엔진
 """
 import chromadb
 import json
+import re
 from sentence_transformers import SentenceTransformer
 
 class RecipeSearcher:
@@ -12,84 +13,127 @@ class RecipeSearcher:
         """
         초기화: 로컬 임베딩 모델 로드 및 ChromaDB 연결
         """
-        # 1. HuggingFace의 한국어 특화 모델
+        # 1. HuggingFace의 한국어 특화 모델 (768차원)
         self.model = SentenceTransformer('jhgan/ko-sroberta-multitask')
         
-        # 2. ChromaDB 영구 저장소 클라이언트 연결
+        # 2. ChromaDB 클라이언트 연결
         self.client = chromadb.PersistentClient(path=db_path)
         
-        # 3. reindex.py에서 생성된 recipes_local_cosine 불러오기
+        # 3. 컬렉션 로드
         try:
             self.collection = self.client.get_collection(name="recipes_local_cosine")
-            print(f"✅ 'recipes_local_cosine' 컬렉션을 성공적으로 로드했습니다. (데이터 수: {self.collection.count()}개)")
+            print(f"✅ 'recipes_local_cosine' 컬렉션 로드 완료. (데이터: {self.collection.count()}개)")
         except Exception as e:
             print(f"❌ 컬렉션 로드 실패: {e}")
 
+    def clean_recipe_name(self, name):
+        """
+        [고도화된 정제] 자취생용 수식어 제거 및 단어 정렬 정규화
+        """
+        name = re.sub(r'[^\w\s]', ' ', name).lower()
+        
+        # 1인 가구에게 노이즈가 되는 단어들 대폭 제거
+        stop_words = [
+            '레시피', '만들기', '방법', '황금레시피', '간단', '초간단', '아삭한', '맛있는', 
+            '꿀팁', '집밥', '반찬', '양념', '젓국', '하얀', '식감이', '매력적인', '단짠', 
+            '입맛돋궈주는', '새콤아삭', '든든한', '최고의'
+        ]
+        
+        words = name.split()
+        # 어순 정규화: 단어를 가나다순으로 정렬하여 '하얀 콩나물'과 '콩나물 하얀'을 동일하게 처리
+        cleaned_words = sorted([w for w in words if w not in stop_words])
+        
+        unique_words = []
+        for w in cleaned_words:
+            if w not in unique_words:
+                unique_words.append(w)
+                
+        return " ".join(unique_words).strip()
+
+    def is_too_similar(self, new_name, existing_names, threshold=0.6):
+        """
+        [중복도 검사] Overlap Coefficient를 사용하여 비슷한 메뉴 중복 방지
+        """
+        new_set = set(new_name.split())
+        if not new_set: return True
+
+        for existing in existing_names:
+            existing_set = set(existing.split())
+            if not existing_set: continue
+            
+            # 단어 중복 비율 계산
+            intersection = new_set.intersection(existing_set)
+            overlap = len(intersection) / min(len(new_set), len(existing_set))
+            
+            if overlap >= threshold:
+                return True
+        return False
+
     def hybrid_search(self, user_ingredients, n_results=5):
         """
-        [Hybrid Ranking] 벡터 유사도 + 키워드 매칭 가중치 모델
+        벡터 유사도(60%) + 키워드 매칭(40%) + 자취생용 다양성 필터
         """
-        # 1. 쿼리 텍스트 생성 및 임베딩 변환
         query_text = " ".join(user_ingredients)
         query_vector = self.model.encode(query_text).tolist()
         
-        # 2. 벡터 데이터베이스 검색 (상위 n_results의 2배를 후보군으로 추출)
+        # 중복을 걸러내고도 5개를 채우기 위해 충분한 후보(75개) 추출
         results = self.collection.query(
             query_embeddings=[query_vector],
-            n_results=n_results * 2
+            n_results=n_results * 15 
         )
         
         hybrid_results = []
-        
-        # 3. 검색 결과 루프 및 점수 재계산
+        final_names = [] 
+
         for i in range(len(results['ids'][0])):
             metadata = results['metadatas'][0][i]
-        
+            raw_name = metadata['name']
+            cleaned_name = self.clean_recipe_name(raw_name)
+            
+            # 기존 결과와 너무 비슷하면 건너뜀 (다양성 확보)
+            if self.is_too_similar(cleaned_name, final_names):
+                continue
+            
             recipe_ingredients = json.loads(metadata['ingredients'])
-            
-            # (1) 벡터 유사도 점수 (0~1 범위)
-            # ChromaDB의 cosine distance를 유사도로 변환
             vector_score = 1 - results['distances'][0][i]
-            
-            # (2) 키워드 매칭 점수 (0~1 범위)
-            # 사용자가 가진 재료가 실제 레시피에 포함된 비율 계산
             match_count = sum(1 for ing in user_ingredients if ing in recipe_ingredients)
             keyword_score = match_count / len(user_ingredients) if user_ingredients else 0
             
-            # (3) 최종 하이브리드 점수 합산 (가중치 설정: 벡터 60%, 키워드 40%)
             final_score = (vector_score * 0.6) + (keyword_score * 0.4)
             
             hybrid_results.append({
-                "name": metadata['name'],
+                "name": cleaned_name,
+                "original_name": raw_name,
+                "score": round(final_score * 100, 2),
                 "ingredients": recipe_ingredients,
-                "score": round(final_score * 100, 2), # 100점 만점으로 표기
                 "url": metadata.get('blog_url', '정보 없음')
             })
+            final_names.append(cleaned_name)
             
-        # 4. 최종 점수(score) 기준 내림차순 정렬 후 상위 n_results 반환
-        return sorted(hybrid_results, key=lambda x: x['score'], reverse=True)[:n_results]
+            if len(hybrid_results) == n_results:
+                break
+        
+        return hybrid_results
 
-# --- 테스트 코드 ---
+# --- 테스트 및 통합용 출력 코드 ---
 if __name__ == "__main__":
     searcher = RecipeSearcher()
-    
-    # OCR 결과물로 가정할 입력 데이터
     ocr_output = ["콩나물", "마늘", "대파"]
     
-    print(f"\n🛒 입력된 식재료: {ocr_output}")
-    print("🚀 하이브리드 검색을 시작합니다...\n")
+    print(f"\n🛒 [자취생 모드] 인식된 식재료: {ocr_output}")
+    print("🚀 중복 없는 고도화된 검색을 시작합니다...\n")
     
     top_recipes = searcher.hybrid_search(ocr_output, n_results=5)
     
     print("="*50)
-    print("🍳 AI 추천 레시피 결과")
+    print("🍳 SaveMyDinner: 오늘의 추천 레시피")
     print("="*50)
     for idx, r in enumerate(top_recipes, 1):
-        print(f"{idx}. {r['name']} (일치율: {r['score']}%)")
-        print(f"   주요 재료: {', '.join(r['ingredients'][:5])}...")
-        print(f"   레시피 링크: {r['url']}")
+        print(f"{idx}. {r['name']} (적합도: {r['score']}%)")
+        print(f"   [출처: {r['original_name']}]")
+        print(f"   🔗 {r['url']}")
         print("-" * 50)
     
-    # 다음 모듈(UI)에 넘겨줄 요리명 리스트만 추출
+    # 수민이에게 전달할 최종 요리명 리스트 추출 및 출력
     recipe_names = [r['name'] for r in top_recipes]
-    print(f"최종 전달할 요리명 5개: {recipe_names}")
+    print(f"✅ 최종 전달할 정제된 요리명 5개: {recipe_names}")
