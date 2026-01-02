@@ -9,10 +9,9 @@ from typing import Iterable, List, Sequence
 from paddleocr import PaddleOCR
 from ultralytics import YOLO
 
-from ocr_inference import run_ocr_with_rotations
-from postprocessing import clean_ocr_with_llm
-from yolo_inference import load_image, run_yolo
-from yolo_inference import run_yolo
+from modules.ocr.ocr_inference import run_ocr_with_rotations
+from modules.ocr.postprocessing import clean_ocr_with_llm
+from modules.ocr.yolo_inference import load_image, run_yolo
 
 def _dedupe_keep_order(items: Sequence[str]) -> List[str]:
     """리스트 아이템 중복제거 함수"""
