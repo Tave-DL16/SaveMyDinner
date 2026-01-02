@@ -731,7 +731,7 @@ def step3_choose_dish() -> None:
     else:
         st.info("🍳 추천 요리 중에서 선택하거나, 직접 입력해주세요!")
 
-    candidates = (st.session_state.dish_candidates or [])[:3]
+    candidates = (st.session_state.dish_candidates or [])[:5]
 
     if candidates:
         st.markdown("#### 🎯 AI 추천 요리")
