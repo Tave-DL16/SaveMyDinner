@@ -26,7 +26,11 @@ from .mock_services import (
     mock_get_links_for_dish,
 )
 
+# OCR 파이프라인
 _ocr_pipeline = None
+
+# VectorDB 검색기
+_recipe_searcher = None
 
 def _get_ocr_pipeline():
     """OCR 파이프라인을 lazy load하는 함수"""
@@ -41,6 +45,22 @@ def _get_ocr_pipeline():
             print("Mock 데이터를 사용합니다.")
             return None
     return _ocr_pipeline
+
+
+def _get_recipe_searcher():
+    """VectorDB RecipeSearcher를 lazy load하는 함수"""
+    global _recipe_searcher
+    if _recipe_searcher is None:
+        try:
+            sys.path.append(str(Path(__file__).parent.parent.parent))
+            from modules.vector_db.search import RecipeSearcher
+            _recipe_searcher = RecipeSearcher()
+            print("✅ VectorDB RecipeSearcher 로드 완료")
+        except Exception as e:
+            print(f"VectorDB 모듈 import 실패: {e}")
+            print("Mock 데이터를 사용합니다.")
+            return None
+    return _recipe_searcher
 
 
 def detect_ingredients(image_file: Any) -> List[str]:
@@ -88,9 +108,42 @@ def detect_ingredients(image_file: Any) -> List[str]:
 def get_dish_candidates(ingredients: List[str]) -> List[str]:
     """
     재료 리스트를 받아 요리 후보 5개 정도 반환.
-    나중에 modules/vector_db/... 로 교체 예정.
+    VectorDB 하이브리드 검색으로 레시피 추천.
     """
-    return mock_get_dish_candidates(ingredients)
+    if not ingredients:
+        return []
+
+    # VectorDB RecipeSearcher 로드
+    searcher = _get_recipe_searcher()
+
+    # VectorDB를 사용할 수 없으면 mock 데이터 반환
+    if searcher is None:
+        print("VectorDB를 사용할 수 없어 Mock 데이터를 사용합니다.")
+        return mock_get_dish_candidates(ingredients)
+
+    try:
+        print(f"\n{'='*50}")
+        print(f"🛒 재료 기반 레시피 검색: {ingredients}")
+        print(f"{'='*50}")
+
+        # 하이브리드 검색 실행 (벡터 유사도 60% + 키워드 매칭 40%)
+        top_recipes = searcher.hybrid_search(ingredients, n_results=5)
+
+        # 정제된 요리명만 추출
+        recipe_names = [r['name'] for r in top_recipes]
+
+        print(f"\n✅ 추천 레시피 ({len(recipe_names)}개):")
+        for idx, recipe in enumerate(top_recipes, 1):
+            print(f"   {idx}. {recipe['name']} (적합도: {recipe['score']}%)")
+
+        print(f"{'='*50}\n")
+
+        return recipe_names
+
+    except Exception as e:
+        print(f"VectorDB 검색 오류: {e}")
+        print("오류 발생으로 Mock 데이터를 사용합니다.")
+        return mock_get_dish_candidates(ingredients)
 
 
 def get_recipe_links(dish: str) -> Dict:
