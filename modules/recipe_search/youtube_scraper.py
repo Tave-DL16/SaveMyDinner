@@ -5,14 +5,13 @@ modules.recipe_search.youtube_scraper의 Docstring
 
 Args:
         dish_name: 요리명 (예: "김치찌개", "된장국")
+        num_results: 반환할 레시피 수 (기본값: 3)
     
 Returns:
     {
-        "dish_name": str,
-        "video_url": str,
-        "video_title": str,
-        "ingredients": list[str],
-        "steps": list[str]
+        "1": {"dish_name": str, "video_url": str, "video_title": str, "ingredients": list, "steps": list},
+        "2": {...},
+        "3": {...}
     }
 """
 
@@ -201,57 +200,57 @@ def parse_recipe_with_gemini(dish_name: str, subtitle_text: str) -> dict:
     }
 
 
-def get_recipe_from_youtube(dish_name: str) -> dict:
+def get_recipe_from_youtube(dish_name: str, num_results: int = 3) -> dict:
     """
-    요리명을 입력받아 YouTube에서 레시피 검색, 추출
+    요리명을 입력받아 YouTube에서 레시피 검색, 추출 (최대 3개 영상)
     
     Args:
         dish_name: 요리명 (예: "김치찌개", "된장국")
+        num_results: 반환할 레시피 수 (기본값: 3)
     
     Returns:
         {
-            "dish_name": str,
-            "video_url": str,
-            "video_title": str,
-            "ingredients": list[str],
-            "steps": list[str]
+            "1": {"dish_name": str, "video_url": str, "video_title": str, "ingredients": list, "steps": list},
+            "2": {...},
+            "3": {...}
         }
     
     Raises:
         ValueError: 적절한 영상을 찾지 못한 경우
     """
     # 1. YouTube 검색
-    videos = search_youtube(dish_name)
+    videos = search_youtube(dish_name, max_results=10)
     
     if not videos:
         raise ValueError(f"'{dish_name}'에 대한 YouTube 영상을 찾을 수 없습니다.")
     
-    # 2. 자막이 있는 영상 찾기
-    selected_video = None
-    subtitle_text = None
+    # 2. 자막이 있는 영상 찾기 (최대 num_results개)
+    results = {}
+    count = 0
     
     for video in videos:
+        if count >= num_results:
+            break
+            
         subtitle_text = extract_subtitles(video["video_id"])
         if subtitle_text:
-            selected_video = video
-            break
+            # 3. Gemini로 레시피 파싱
+            recipe_data = parse_recipe_with_gemini(dish_name, subtitle_text)
+            
+            # 4. 결과 구성
+            results[str(count + 1)] = {
+                "dish_name": dish_name,
+                "video_url": video["url"],
+                "video_title": video["title"],
+                "ingredients": recipe_data["ingredients"],
+                "steps": recipe_data["steps"]
+            }
+            count += 1
     
-    if not selected_video or not subtitle_text:
+    if not results:
         raise ValueError(f"'{dish_name}' 관련 영상 중 자막이 있는 영상을 찾을 수 없습니다.")
     
-    # 3. Gemini로 레시피 파싱
-    recipe_data = parse_recipe_with_gemini(dish_name, subtitle_text)
-    
-    # 4. 결과 구성
-    result = {
-        "dish_name": dish_name,
-        "video_url": selected_video["url"],
-        "video_title": selected_video["title"],
-        "ingredients": recipe_data["ingredients"],
-        "steps": recipe_data["steps"]
-    }
-    
-    return result
+    return results
 
 
 # 테스트용 코드
@@ -261,7 +260,7 @@ if __name__ == "__main__":
     
     try:
         result = get_recipe_from_youtube(test_dish)
-        print("\n---------- 검색 결과 ----------")
+        print(f"\n---------- 검색 결과 ({len(result)}개 영상) ----------")
         print(json.dumps(result, ensure_ascii=False, indent=2))
     except Exception as e:
         print(f"오류 발생: {e}")
