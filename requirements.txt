@@ -5,7 +5,7 @@ paddleocr
 opencv-python
 Pillow
 numpy
-#accelerate
+accelerate
 
 # LLM & ML
 torch

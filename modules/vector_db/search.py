@@ -38,6 +38,7 @@ class RecipeSearcher:
             #(밑으로 내림)
             # self.collection = self.client.get_collection(name="recipes_local_cosine")
             # print(f"✅ 'recipes_local_cosine' 컬렉션 로드 완료. (데이터: {self.collection.count()}개)")
+            
             # 먼저 recipes_1000 시도 (temp 데이터)
             try:
                 self.collection = self.client.get_collection(name="recipes_1000")
