@@ -56,6 +56,10 @@ def run_ocr_pipeline(
     print(f"   → OCR 원본 결과 ({len(raw_texts)}개): {raw_texts[:10]}...")  # 처음 10개만
 
     # 2. LLM 후처리
+    #TODO LLM 결과 파싱 수정하기
+    # But wait, the input has "초밥황", "구운미니", "마늘바게뜨", "피자맛바게뜨", "스파게티", "오이", "시금치", "라면", "초밥왕", "cat fresh", "eat fresh", "Fresco", "프레스코", "트스파게티", "구운", "미니", "garlic",
+   #LLM 파싱 결과: []
+   #→ LLM 후처리 결과 (0개): []
     print("\n[2단계] LLM 후처리 중...")
     llm_items = clean_ocr_with_llm(raw_texts, model_name=model_name)
     print(f"   → LLM 후처리 결과 ({len(llm_items)}개): {llm_items}")
