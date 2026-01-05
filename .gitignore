@@ -1,6 +1,6 @@
 
 # Vector DB Data
-modules/vector_db/vectordb_recipes/
+# modules/vector_db/vectordb_recipes/
 
 # Python cache
 __pycache__/
