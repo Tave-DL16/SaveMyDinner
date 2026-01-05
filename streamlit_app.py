@@ -796,7 +796,7 @@ def render_link_card(title: str, subtitle: str, url: str, index: int) -> None:
         st.markdown(f"### {rank_emoji} {title}")
 
         if subtitle:
-            st.caption(f"👤 {subtitle}")
+            st.caption(f"🍛 {subtitle}")
 
         st.write("")
         st.link_button("🎬 영상 보러가기", url, use_container_width=True)
