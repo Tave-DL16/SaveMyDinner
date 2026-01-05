@@ -32,6 +32,9 @@ _ocr_pipeline = None
 # VectorDB 검색기
 _recipe_searcher = None
 
+# YouTube 레시피 검색 함수
+_youtube_recipe_func = None
+
 def _get_ocr_pipeline():
     """OCR 파이프라인을 lazy load하는 함수"""
     global _ocr_pipeline
@@ -61,6 +64,22 @@ def _get_recipe_searcher():
             print("Mock 데이터를 사용합니다.")
             return None
     return _recipe_searcher
+
+
+def _get_youtube_recipe_func():
+    """YouTube 레시피 검색 함수를 lazy load하는 함수"""
+    global _youtube_recipe_func
+    if _youtube_recipe_func is None:
+        try:
+            sys.path.append(str(Path(__file__).parent.parent.parent))
+            from modules.recipe_search.youtube_scraper import get_recipe_from_youtube
+            _youtube_recipe_func = get_recipe_from_youtube
+            print("✅ YouTube 레시피 검색 모듈 로드 완료")
+        except Exception as e:
+            print(f"YouTube 레시피 검색 모듈 import 실패: {e}")
+            print("Mock 데이터를 사용합니다.")
+            return None
+    return _youtube_recipe_func
 
 
 def detect_ingredients(image_file: Any) -> List[str]:
@@ -148,8 +167,63 @@ def get_dish_candidates(ingredients: List[str]) -> List[str]:
 
 def get_recipe_links(dish: str) -> Dict:
     """
-    요리명을 받아 유튜브/사이트 링크 반환.
-    나중에 modules/recipe_search/... 로 교체 예정.
+    요리명을 받아 유튜브 레시피 링크 반환.
+    YouTube 자막을 분석하여 재료와 조리 단계를 포함한 레시피 정보 제공.
     """
-    return mock_get_links_for_dish(dish)
+    if not dish:
+        return {"youtube": []}
+
+    # YouTube 레시피 검색 함수 로드
+    get_recipe_from_youtube = _get_youtube_recipe_func()
+
+    # YouTube 레시피 검색을 사용할 수 없으면 mock 데이터 반환
+    if get_recipe_from_youtube is None:
+        print("YouTube 레시피 검색을 사용할 수 없어 Mock 데이터를 사용합니다.")
+        return mock_get_links_for_dish(dish)
+
+    try:
+        print(f"\n{'='*50}")
+        print(f"🎬 YouTube 레시피 검색: {dish}")
+        print(f"{'='*50}")
+
+        # YouTube에서 레시피 검색 (최대 3개)
+        recipe_results = get_recipe_from_youtube(dish, num_results=3)
+
+        # UI 형식에 맞게 변환
+        youtube_list = []
+        for key, recipe_data in recipe_results.items():
+            youtube_list.append({
+                "title": recipe_data["video_title"],
+                "channel": recipe_data.get("dish_name", dish),  # 채널명 대신 요리명 사용
+                "url": recipe_data["video_url"],
+                # 추가 정보 (UI에서 필요 시 사용 가능)
+                "ingredients": recipe_data.get("ingredients", []),
+                "steps": recipe_data.get("steps", [])
+            })
+
+        print(f"\n✅ 검색 완료: {len(youtube_list)}개 영상 찾음")
+        for idx, video in enumerate(youtube_list, 1):
+            print(f"   {idx}. {video['title']}")
+            print(f"      재료: {len(video.get('ingredients', []))}개, 단계: {len(video.get('steps', []))}개")
+
+        print(f"{'='*50}\n")
+
+        return {"youtube": youtube_list}
+
+    except ValueError as e:
+        # 영상을 찾지 못한 경우
+        print(f"⚠️ YouTube 레시피 검색 실패: {e}")
+        print("Mock 데이터를 사용합니다.")
+        return mock_get_links_for_dish(dish)
+    except Exception as e:
+        print(f"YouTube 레시피 검색 오류: {e}")
+        print("오류 발생으로 Mock 데이터를 사용합니다.")
+        return mock_get_links_for_dish(dish)
+
+
+# def get_recipe_links(dish: str) -> Dict:
+#     """
+#     요리명을 받아 유튜브/사이트 링크 반환 (Mock 버전).
+#     """
+#     return mock_get_links_for_dish(dish)
 
