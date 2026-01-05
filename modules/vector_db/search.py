@@ -6,47 +6,47 @@ modules.vector_db.search
 import chromadb
 import json
 import re
-import os
-from openai import OpenAI
-from dotenv import load_dotenv
+# import os  # OpenAI 모델 사용 시 필요
+from sentence_transformers import SentenceTransformer
+# from openai import OpenAI  # OpenAI 모델 사용 시
+# from dotenv import load_dotenv  # OpenAI API 키 사용 시 필요
 
-load_dotenv()
+# load_dotenv()  # OpenAI API 키 사용 시 필요
 
 class RecipeSearcher:
     def __init__(self, db_path="./modules/vector_db/vectordb_recipes"):
         """
-        초기화: 로컬 임베딩 모델 로드 및 ChromaDB 연결 ->
-        초기화: OpenAI 임베딩 모델 및 ChromaDB 연결 로 수정
+        초기화: 로컬 임베딩 모델 로드 및 ChromaDB 연결
         """
 
-        # # 1. HuggingFace의 한국어 특화 모델 (768차원)
-        # self.model = SentenceTransformer('jhgan/ko-sroberta-multitask')
-        
-        # 1. OpenAI 클라이언트 (1536차원)
-        api_key = os.getenv('OPENAI_API_KEY')
-        if api_key:
-            self.openai_client = OpenAI(api_key=api_key)
-        else:
-            print("⚠️ OPENAI_API_KEY not found - VectorDB search will be limited")
-            self.openai_client = None
+        # 1. HuggingFace의 한국어 특화 모델 (768차원)
+        self.model = SentenceTransformer('jhgan/ko-sroberta-multitask')
+
+        # # 1. OpenAI 클라이언트 (1536차원)
+        # api_key = os.getenv('OPENAI_API_KEY')
+        # if api_key:
+        #     self.openai_client = OpenAI(api_key=api_key)
+        # else:
+        #     print("⚠️ OPENAI_API_KEY not found - VectorDB search will be limited")
+        #     self.openai_client = None
 
         # 2. ChromaDB 클라이언트 연결
         self.client = chromadb.PersistentClient(path=db_path)
-        
+
         # 3. 컬렉션 로드
         try:
-            #(밑으로 내림)
-            # self.collection = self.client.get_collection(name="recipes_local_cosine")
-            # print(f"✅ 'recipes_local_cosine' 컬렉션 로드 완료. (데이터: {self.collection.count()}개)")
-            
-            # 먼저 recipes_1000 시도 (temp 데이터)
-            try:
-                self.collection = self.client.get_collection(name="recipes_1000")
-                print(f"✅ 'recipes_1000' 컬렉션 로드 완료. (데이터: {self.collection.count()}개)")
-            except:
-                # 없으면 recipes_local_cosine 시도 (기존 이름)
-                self.collection = self.client.get_collection(name="recipes_local_cosine")
-                print(f"✅ 'recipes_local_cosine' 컬렉션 로드 완료. (데이터: {self.collection.count()}개)")
+            # recipes_local_cosine 컬렉션 우선 로드 (로컬 모델용)
+            self.collection = self.client.get_collection(name="recipes_local_cosine")
+            print(f"✅ 'recipes_local_cosine' 컬렉션 로드 완료. (데이터: {self.collection.count()}개)")
+
+            # # 먼저 recipes_1000 시도 (temp 데이터)
+            # try:
+            #     self.collection = self.client.get_collection(name="recipes_1000")
+            #     print(f"✅ 'recipes_1000' 컬렉션 로드 완료. (데이터: {self.collection.count()}개)")
+            # except:
+            #     # 없으면 recipes_local_cosine 시도 (기존 이름)
+            #     self.collection = self.client.get_collection(name="recipes_local_cosine")
+            #     print(f"✅ 'recipes_local_cosine' 컬렉션 로드 완료. (데이터: {self.collection.count()}개)")
         except Exception as e:
             print(f"❌ 컬렉션 로드 실패: {e}")
 
@@ -94,30 +94,41 @@ class RecipeSearcher:
         return False
 
     def get_embedding(self, text: str) -> list:
-        """OpenAI API로 임베딩 생성"""
-        if self.openai_client is None:
-            return None
-
+        """로컬 SentenceTransformer 모델로 임베딩 생성 (768차원)"""
         try:
-            response = self.openai_client.embeddings.create(
-                model="text-embedding-3-small",
-                input=text
-            )
-            return response.data[0].embedding
+            return self.model.encode(text).tolist()
         except Exception as e:
             print(f"임베딩 생성 실패: {e}")
             return None
+
+    # def get_embedding(self, text: str) -> list:
+    #     """OpenAI API로 임베딩 생성 (1536차원)"""
+    #     if self.openai_client is None:
+    #         return None
+    #
+    #     try:
+    #         response = self.openai_client.embeddings.create(
+    #             model="text-embedding-3-small",
+    #             input=text
+    #         )
+    #         return response.data[0].embedding
+    #     except Exception as e:
+    #         print(f"임베딩 생성 실패: {e}")
+    #         return None
 
     def hybrid_search(self, user_ingredients, n_results=5):
         """
         벡터 유사도(60%) + 키워드 매칭(40%) + 자취생용 다양성 필터
         """
-        # query_text = " ".join(user_ingredients)
-        # query_vector = self.model.encode(query_text).tolist()
-        # DB 구축 시 사용한 형식과 동일하게 쿼리 생성
+        # 로컬 모델용: reindex.py와 동일한 형식으로 쿼리 생성
         ingredients_text = ", ".join(user_ingredients)
-        query_text = f"재료: {ingredients_text}. 이 재료들로 만들 수 있는 요리를 찾아주세요."
+        query_text = f"요리명: , 재료: {ingredients_text}"
         query_vector = self.get_embedding(query_text)
+
+        # # OpenAI 모델용: DB 구축 시 사용한 형식과 동일하게 쿼리 생성
+        # ingredients_text = ", ".join(user_ingredients)
+        # query_text = f"재료: {ingredients_text}. 이 재료들로 만들 수 있는 요리를 찾아주세요."
+        # query_vector = self.get_embedding(query_text)
 
         if query_vector is None:
             print("⚠️ 임베딩 생성 실패, 빈 결과 반환")
