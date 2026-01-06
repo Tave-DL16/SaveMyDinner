@@ -1,22 +1,13 @@
-"""
-OCR 파이프라인 메인 모듈
-이미지에서 식자재를 추출하는 통합 파이프라인
-예시.py 내 함수 재구성
-"""
-
-from __future__ import annotations
-
 from pathlib import Path
-from typing import Iterable, List, Sequence
 
 from paddleocr import PaddleOCR
+from ultralytics.models.sam import SAM3SemanticPredictor
 
 from modules.ocr.ocr_inference import run_ocr_with_rotations
-from modules.ocr.postprocessing import clean_ocr_with_llm
-from modules.ocr.yolo_inference import load_image, run_yolo
+from modules.ocr.detect_ingredients import run_sam
+from modules.ocr.qwen_model import postprocessing_with_vlm,clean_ocr_with_llm
 
-
-def _dedupe_keep_order(items: Sequence[str]) -> List[str]:
+def _dedupe_keep_order(items):
     """리스트 아이템 중복제거 함수"""
     seen = set()
     result = []
@@ -26,59 +17,53 @@ def _dedupe_keep_order(items: Sequence[str]) -> List[str]:
             result.append(item)
     return result
 
+BASE_DIR = Path(__file__).resolve().parent
+IMAGE_PATH = BASE_DIR / "pngtree-fresh-vegetables-set-realistic-tomatoes-cucumber-carrots-lettuce-in-ultra-hd-png-image_17699620.webp"
+OCR_ENGINE = PaddleOCR(lang="korean", use_angle_cls=True)
+
+
+overrides = dict(
+    conf=0.25,
+    task="segment",
+    mode="predict",
+    model=str(BASE_DIR / "sam3.pt"),
+    half=True,  # Use FP16 for faster inference
+    save=True,
+)
+SAM_MODEL = SAM3SemanticPredictor(overrides=overrides)
 
 def run_ocr_pipeline(
-    image_path: Path,
-    rotations: Iterable[int] = (0, 90, 180, 270),
-    model_name: str = "Qwen/Qwen3-1.7B",
-    yolo_weights: Path | None = None,
-) -> List[str]:
-    """
-    이미지 경로를 입력받아 최종 식자재 LIST를 반환
+        ocr_engine,
+        sam_model,
+        image_path,
+        model_name_llm = "Qwen/Qwen3-1.7B",
+        model_name_vlm = "Qwen/Qwen3-VL-2B-Instruct",
+        rotations = [0,90,180,270]
+):
+    print("step1 OCR")
+    raw_texts = run_ocr_with_rotations(ocr_engine, image_path, rotations=rotations)
+    print(raw_texts)
 
-    Args:
-        image_path: 입력 이미지 경로
-        rotations: OCR을 시도할 회전 각도들 (기본: 0, 90, 180, 270도)
-        model_name: LLM 후처리에 사용할 모델 이름 (기본: Qwen/Qwen3-1.7B)
-        yolo_weights: YOLO 모델 가중치 파일 경로 (선택사항)
+    print("Step2 TEXT LLM 후처리")
+    llm_items = clean_ocr_with_llm(raw_texts, model_name = model_name_llm)
+    print(llm_items)
 
-    Returns:
-        식자재 이름 리스트
-    """
-    print(f"\n{'='*50}")
-    print(f"OCR Pipeline 시작: {image_path.name}")
-    print(f"{'='*50}")
+    print("Step3 SAM_MODEL")
+    sam_result = run_sam(image_path=image_path, model=sam_model)
+    print(sam_result)
 
-    # 1. PaddleOCR로 텍스트 추출
-    print("\n[1단계] PaddleOCR 텍스트 추출 중...")
-    ocr = PaddleOCR(lang="korean", use_angle_cls=True)
-    raw_texts = run_ocr_with_rotations(ocr, image_path, rotations=rotations)
-    print(f"   → OCR 원본 결과 ({len(raw_texts)}개): {raw_texts[:10]}...")  # 처음 10개만
+    print("Step4 VLM 후처리")
+    vlm_items = postprocessing_with_vlm(sam_item=sam_result, model_name=model_name_vlm)
+    
+    final_result = [*llm_items , *vlm_items]
 
-    # 2. LLM 후처리
-    #TODO LLM 결과 파싱 수정하기
-    # But wait, the input has "초밥황", "구운미니", "마늘바게뜨", "피자맛바게뜨", "스파게티", "오이", "시금치", "라면", "초밥왕", "cat fresh", "eat fresh", "Fresco", "프레스코", "트스파게티", "구운", "미니", "garlic",
-   #LLM 파싱 결과: []
-   #→ LLM 후처리 결과 (0개): []
-    print("\n[2단계] LLM 후처리 중...")
-    llm_items = clean_ocr_with_llm(raw_texts, model_name=model_name)
-    print(f"   → LLM 후처리 결과 ({len(llm_items)}개): {llm_items}")
+    return _dedupe_keep_order(final_result)
 
-    # 3. YOLO 처리
-    if yolo_weights is None:
-        print("\n[3단계] YOLO 가중치 없음 - OCR 결과만 반환")
-        print(f"\n최종 결과: {llm_items}")
-        return llm_items
 
-    print("\n[3단계] YOLO 객체 감지 중...")
-    image = load_image(image_path)
-    yolo_items = run_yolo(image, str(yolo_weights))
-    print(f"   → YOLO 결과 ({len(yolo_items)}개): {yolo_items}")
-
-    # 4. 결과 합치기
-    final_result = _dedupe_keep_order([*yolo_items, *llm_items])
-    print(f"\n[4단계] YOLO + OCR 통합")
-    print(f"   → 최종 결과 ({len(final_result)}개): {final_result}")
-    print(f"{'='*50}\n")
-
-    return final_result
+if __name__ == "__main__":
+    result = run_ocr_pipeline(
+        ocr_engine=OCR_ENGINE,
+        sam_model=SAM_MODEL,
+        image_path=IMAGE_PATH,
+    )
+    print(f"\nFinal result: {result}")
