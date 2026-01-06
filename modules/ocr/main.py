@@ -26,7 +26,7 @@ overrides = dict(
     conf=0.25,
     task="segment",
     mode="predict",
-    model=str(BASE_DIR / "sam3.pt"),
+    model=str(BASE_DIR.parent.parent / "weights" / "sam3.pt"),
     half=True,  # Use FP16 for faster inference
     save=True,
 )
@@ -46,6 +46,8 @@ def run_ocr_pipeline(
 
     print("Step2 TEXT LLM 후처리")
     llm_items = clean_ocr_with_llm(raw_texts, model_name = model_name_llm)
+    if llm_items is None:
+        llm_items = []
     print(llm_items)
 
     print("Step3 SAM_MODEL")

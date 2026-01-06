@@ -26,8 +26,10 @@ from .mock_services import (
     mock_get_links_for_dish,
 )
 
-# OCR 파이프라인
+# OCR 파이프라인 및 리소스
 _ocr_pipeline = None
+_ocr_engine = None
+_sam_model = None
 
 # VectorDB 검색기
 _recipe_searcher = None
@@ -48,6 +50,22 @@ def _get_ocr_pipeline():
             print("Mock 데이터를 사용합니다.")
             return None
     return _ocr_pipeline
+
+
+def _get_ocr_resources():
+    """OCR 엔진과 SAM 모델을 lazy load하는 함수"""
+    global _ocr_engine, _sam_model
+    if _ocr_engine is None or _sam_model is None:
+        try:
+            sys.path.append(str(Path(__file__).parent.parent.parent))
+            from modules.ocr.main import OCR_ENGINE, SAM_MODEL
+            _ocr_engine = OCR_ENGINE
+            _sam_model = SAM_MODEL
+        except ImportError as e:
+            print(f"OCR 리소스 import 실패: {e}")
+            print("Mock 데이터를 사용합니다.")
+            return None, None
+    return _ocr_engine, _sam_model
 
 
 def _get_recipe_searcher():
@@ -92,9 +110,10 @@ def detect_ingredients(image_file: Any) -> List[str]:
     
     # OCR 모듈 사용
     run_ocr_pipeline = _get_ocr_pipeline()
+    ocr_engine, sam_model = _get_ocr_resources()
 
     # OCR 모듈을 사용할 수 없으면 mock 데이터 반환
-    if run_ocr_pipeline is None:
+    if run_ocr_pipeline is None or ocr_engine is None or sam_model is None:
         print("OCR 모듈을 사용할 수 없어 Mock 데이터를 사용합니다.")
         return mock_detect_ingredients()
 
@@ -105,13 +124,13 @@ def detect_ingredients(image_file: Any) -> List[str]:
 
     try:
         # OCR 파이프라인 실행
-        yolo_weights = Path(__file__).parent.parent / "ocr" / "best.pt"
-
         ingredients = run_ocr_pipeline(
+            ocr_engine=ocr_engine,
+            sam_model=sam_model,
             image_path=tmp_path,
             rotations=(0, 90, 180, 270),
-            model_name="Qwen/Qwen3-1.7B",
-            yolo_weights=yolo_weights if yolo_weights.exists() else None,
+            model_name_llm="Qwen/Qwen3-1.7B",
+            model_name_vlm="Qwen/Qwen3-VL-2B-Instruct",
         )
         return ingredients
     except Exception as e:
@@ -226,4 +245,3 @@ def get_recipe_links(dish: str) -> Dict:
 #     요리명을 받아 유튜브/사이트 링크 반환 (Mock 버전).
 #     """
 #     return mock_get_links_for_dish(dish)
-

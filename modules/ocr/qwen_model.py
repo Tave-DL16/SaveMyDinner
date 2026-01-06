@@ -221,34 +221,42 @@ def _generate_vlm_text(
     return processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip("\n")
 
 
-def _extract_list(text: str) -> List[str]:
+def _extract_list(text: str) -> Optional[List[str]]:
     left = text.find("[")
     right = text.rfind("]")
     if left == -1 or right == -1 or right <= left:
-        return []
+        return None
     snippet = text[left : right + 1]
     try:
         value = ast.literal_eval(snippet)
     except (SyntaxError, ValueError):
-        return []
+        return None
     if not isinstance(value, list):
-        return []
-    return [str(item).strip() for item in value if str(item).strip()]
+        return None
+    items: List[str] = []
+    for item in value:
+        text = str(item).strip()
+        if not text or text in {"[]", "[ ]"}:
+            continue
+        items.append(text)
+    return items
 
 
 def clean_ocr_with_llm(
     ocr_list: Iterable[str],
     model_name: str = "Qwen/Qwen3-1.7B",
     max_new_tokens: int = 2048,
-) -> List[str]:
+) -> Optional[List[str]]:
     bundle = _load_model(model_name, use_vision=False)
     prompt = _PROMPTS.get("ocr", ocr_list=list(ocr_list))
     content = _generate_text(bundle, prompt, max_new_tokens=max_new_tokens)
     parsed = _extract_list(content)
-    if parsed:
+    if parsed is not None:
         return parsed
     cleaned = content.strip()
-    return [cleaned] if cleaned else []
+    if cleaned in {"[]", "[ ]"}:
+        return []
+    return None
 
 
 def postprocessing_with_vlm(
