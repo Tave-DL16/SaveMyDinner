@@ -6,12 +6,13 @@ modules.vector_db.search
 import chromadb
 import json
 import re
-# import os  # OpenAI 모델 사용 시 필요
+import os
 from sentence_transformers import SentenceTransformer
-# from openai import OpenAI  # OpenAI 모델 사용 시
-# from dotenv import load_dotenv  # OpenAI API 키 사용 시 필요
+from dotenv import load_dotenv
+from google import genai
+from google.genai import types
 
-# load_dotenv()  # OpenAI API 키 사용 시 필요
+load_dotenv()
 
 class RecipeSearcher:
     def __init__(self, db_path="./modules/vector_db/vectordb_recipes"):
@@ -20,59 +21,125 @@ class RecipeSearcher:
         """
 
         # 1. HuggingFace의 한국어 특화 모델 (768차원)
-        self.model = SentenceTransformer('jhgan/ko-sroberta-multitask')
+        self.model = SentenceTransformer('jhgan/ko-sroberta-multitask', device='cpu')
 
-        # # 1. OpenAI 클라이언트 (1536차원)
-        # api_key = os.getenv('OPENAI_API_KEY')
-        # if api_key:
-        #     self.openai_client = OpenAI(api_key=api_key)
-        # else:
-        #     print("⚠️ OPENAI_API_KEY not found - VectorDB search will be limited")
-        #     self.openai_client = None
+        # 2. Gemini API 설정 (최신 google.genai 사용)
+        api_key = os.getenv('GEMINI_API_KEY')
+        if api_key:
+            self.gemini_client = genai.Client(api_key=api_key)
+            print("✅ Gemini API 연결 완료")
+        else:
+            print("⚠️ GEMINI_API_KEY not found - LLM 정제 기능이 제한됩니다")
+            self.gemini_client = None
 
-        # 2. ChromaDB 클라이언트 연결
+        # 3. ChromaDB 클라이언트 연결
         self.client = chromadb.PersistentClient(path=db_path)
 
-        # 3. 컬렉션 로드
+        # 4. 컬렉션 로드
         try:
-            # recipes_local_cosine 컬렉션 우선 로드 (로컬 모델용)
             self.collection = self.client.get_collection(name="recipes_local_cosine")
             print(f"✅ 'recipes_local_cosine' 컬렉션 로드 완료. (데이터: {self.collection.count()}개)")
-
-            # # 먼저 recipes_1000 시도 (temp 데이터)
-            # try:
-            #     self.collection = self.client.get_collection(name="recipes_1000")
-            #     print(f"✅ 'recipes_1000' 컬렉션 로드 완료. (데이터: {self.collection.count()}개)")
-            # except:
-            #     # 없으면 recipes_local_cosine 시도 (기존 이름)
-            #     self.collection = self.client.get_collection(name="recipes_local_cosine")
-            #     print(f"✅ 'recipes_local_cosine' 컬렉션 로드 완료. (데이터: {self.collection.count()}개)")
         except Exception as e:
             print(f"❌ 컬렉션 로드 실패: {e}")
+    
+    def clean_with_llm(self, raw_name):
+        """Gemini API를 사용하여 환각 현상을 방지하고 핵심 요리명만 정확히 추출"""
+        
+        # Gemini를 사용할 수 없으면 규칙 기반으로 대체
+        if self.gemini_client is None:
+            print(f"⚠️ Gemini 미사용: '{raw_name}' -> 규칙 기반 처리")
+            return self.clean_recipe_name(raw_name)
+        
+        # Gemini API용 프롬프트 (더 명확한 예시 추가)
+        prompt = f"""당신은 요리 명칭 정제 전문가입니다. 레시피 제목에서 핵심 요리명만 추출하세요.
+
+규칙:
+- 숫자, 날짜, 에피소드 번호는 제거
+- 수식어(맛있는, 간단한 등)는 제거
+- 조리 방법(만드는법, 레시피 등)은 제거
+- 순수 요리 이름만 출력
+
+예시:
+[176.오트밀과일빵(2025.11.7)] -> 오트밀과일빵
+[[만개백과] EP. 18 가끔 생각나는 야채샐러드빵] -> 야채샐러드빵
+[에어프라이어 요리 양파햄치즈빵 만드는 법 너무 맛있잖아] -> 양파햄치즈빵
+[아삭한 콩나물무침 레시피 만들기] -> 콩나물무침
+
+입력: [{raw_name}]
+출력:"""
+
+        try:
+            # Gemini API 호출
+            response = self.gemini_client.models.generate_content(
+                model='gemini-2.0-flash-exp',
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    max_output_tokens=15,
+                    temperature=0.0,  # 완전 결정론적
+                )
+            )
+            
+            refined = response.text.strip()
+            
+            # 후처리: 불필요한 텍스트 제거
+            refined = re.sub(r'출력:|결과:|->|:|\*|```', '', refined).strip()
+            refined = refined.split('\n')[0].strip()
+            
+            # 검증: 결과가 유효한지 확인
+            if refined and len(refined) >= 2 and not refined.isdigit():
+                print(f"✅ Gemini 정제: '{raw_name}' -> '{refined}'")
+                return refined
+            else:
+                print(f"⚠️ Gemini 결과 불량: '{refined}' -> 규칙 기반으로 대체")
+                return self.clean_recipe_name(raw_name)
+            
+        except Exception as e:
+            print(f"⚠️ Gemini API 오류: {e}")
+            print(f"   '{raw_name}' -> 규칙 기반 처리")
+            return self.clean_recipe_name(raw_name)
 
     def clean_recipe_name(self, name):
         """
-        [고도화된 정제] 자취생용 수식어 제거 및 단어 정렬 정규화
+        [고도화된 정제] 자취생용 수식어 제거 (어순 유지)
         """
-        name = re.sub(r'[^\w\s]', ' ', name).lower()
+        # 1. 특수문자를 공백으로 변환 (괄호, 대괄호, 점 등)
+        name = re.sub(r'[\[\]().,\-_]', ' ', name)
         
-        # 1인 가구에게 노이즈가 되는 단어들 대폭 제거
+        # 2. 숫자와 날짜 패턴 제거 (예: 176, 2025.11.7, EP 18)
+        name = re.sub(r'\d+\.?\d*\.?\d*', ' ', name)
+        name = re.sub(r'ep\s*\d+|episode\s*\d+', ' ', name, flags=re.IGNORECASE)
+        
+        # 3. 소문자 변환
+        name = name.lower()
+        
+        # 4. 노이즈 단어 제거
         stop_words = [
             '레시피', '만들기', '방법', '황금레시피', '간단', '초간단', '아삭한', '맛있는', 
             '꿀팁', '집밥', '반찬', '양념', '젓국', '하얀', '식감이', '매력적인', '단짠', 
-            '입맛돋궈주는', '새콤아삭', '든든한', '최고의'
+            '입맛돋궈주는', '새콤아삭', '든든한', '최고의', '끓이는법', '끓이기', '조리법',
+            '요리법', '쉬운', '빠른', '특급', '비법', '황금', '꿀', '백선생', '알토란',
+            '입맛', '돋구는', '간단하지만', '특별한', '영양만점', '초스피드', '속성',
+            '만개백과', '가끔', '생각나는', '너무', '맛있잖아', '에어프라이어', '요리',
+            '만드는', '법', '법', 'ep', 'episode'
         ]
         
         words = name.split()
-        # 어순 정규화: 단어를 가나다순으로 정렬하여 '하얀 콩나물'과 '콩나물 하얀'을 동일하게 처리
-        cleaned_words = sorted([w for w in words if w not in stop_words])
+        # 어순 유지하면서 불용어만 제거
+        cleaned_words = [w for w in words if w.strip() and w not in stop_words]
         
+        # 중복 제거하되 순서는 유지
         unique_words = []
         for w in cleaned_words:
-            if w not in unique_words:
+            if w not in unique_words and len(w) > 0:
                 unique_words.append(w)
+        
+        result = " ".join(unique_words).strip()
+        
+        # 결과가 비어있으면 원본의 첫 단어라도 반환
+        if not result and words:
+            result = words[0]
                 
-        return " ".join(unique_words).strip()
+        return result
 
     def is_too_similar(self, new_name, existing_names, threshold=0.6):
         """
@@ -101,21 +168,6 @@ class RecipeSearcher:
             print(f"임베딩 생성 실패: {e}")
             return None
 
-    # def get_embedding(self, text: str) -> list:
-    #     """OpenAI API로 임베딩 생성 (1536차원)"""
-    #     if self.openai_client is None:
-    #         return None
-    #
-    #     try:
-    #         response = self.openai_client.embeddings.create(
-    #             model="text-embedding-3-small",
-    #             input=text
-    #         )
-    #         return response.data[0].embedding
-    #     except Exception as e:
-    #         print(f"임베딩 생성 실패: {e}")
-    #         return None
-
     def hybrid_search(self, user_ingredients, n_results=5):
         """
         벡터 유사도(60%) + 키워드 매칭(40%) + 자취생용 다양성 필터
@@ -124,11 +176,6 @@ class RecipeSearcher:
         ingredients_text = ", ".join(user_ingredients)
         query_text = f"요리명: , 재료: {ingredients_text}"
         query_vector = self.get_embedding(query_text)
-
-        # # OpenAI 모델용: DB 구축 시 사용한 형식과 동일하게 쿼리 생성
-        # ingredients_text = ", ".join(user_ingredients)
-        # query_text = f"재료: {ingredients_text}. 이 재료들로 만들 수 있는 요리를 찾아주세요."
-        # query_vector = self.get_embedding(query_text)
 
         if query_vector is None:
             print("⚠️ 임베딩 생성 실패, 빈 결과 반환")
@@ -171,6 +218,11 @@ class RecipeSearcher:
             if len(hybrid_results) == n_results:
                 break
         
+        # 반환 직전 최종 5개에 대해서만 Gemini LLM 정제 수행
+        print("🪄 유튜브 검색 최적화를 위해 요리명을 정제 중입니다...")
+        for res in hybrid_results:
+            res['name'] = self.clean_with_llm(res['original_name'])
+
         return hybrid_results
 
 # --- 테스트 및 통합용 출력 코드 ---
