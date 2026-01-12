@@ -9,8 +9,7 @@ import re
 import os
 from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+from openai import OpenAI
 
 load_dotenv()
 
@@ -23,14 +22,14 @@ class RecipeSearcher:
         # 1. HuggingFace의 한국어 특화 모델 (768차원)
         self.model = SentenceTransformer('jhgan/ko-sroberta-multitask', device='cpu')
 
-        # 2. Gemini API 설정 (최신 google.genai 사용)
-        api_key = os.getenv('GEMINI_API_KEY')
+        # 2. OpenAI API 설정
+        api_key = os.getenv('OPENAI_API_KEY')
         if api_key:
-            self.gemini_client = genai.Client(api_key=api_key)
-            print("✅ Gemini API 연결 완료")
+            self.openai_client = OpenAI(api_key=api_key)
+            print("✅ OpenAI API 연결 완료")
         else:
-            print("⚠️ GEMINI_API_KEY not found - LLM 정제 기능이 제한됩니다")
-            self.gemini_client = None
+            print("⚠️ OPENAI_API_KEY not found - LLM 정제 기능이 제한됩니다")
+            self.openai_client = None
 
         # 3. ChromaDB 클라이언트 연결
         self.client = chromadb.PersistentClient(path=db_path)
@@ -43,58 +42,74 @@ class RecipeSearcher:
             print(f"❌ 컬렉션 로드 실패: {e}")
     
     def clean_with_llm(self, raw_name):
-        """Gemini API를 사용하여 환각 현상을 방지하고 핵심 요리명만 정확히 추출"""
+        """OpenAI API를 사용하여 환각 현상을 방지하고 핵심 요리명만 정확히 추출"""
         
-        # Gemini를 사용할 수 없으면 규칙 기반으로 대체
-        if self.gemini_client is None:
-            print(f"⚠️ Gemini 미사용: '{raw_name}' -> 규칙 기반 처리")
+        # OpenAI를 사용할 수 없으면 규칙 기반으로 대체
+        if self.openai_client is None:
+            print(f"⚠️ OpenAI 미사용: '{raw_name}' -> 규칙 기반 처리")
             return self.clean_recipe_name(raw_name)
         
-        # Gemini API용 프롬프트 (더 명확한 예시 추가)
-        prompt = f"""당신은 요리 명칭 정제 전문가입니다. 레시피 제목에서 핵심 요리명만 추출하세요.
+        # OpenAI API용 프롬프트 (더 명확한 지시사항)
+        prompt = f"""레시피 제목에서 핵심 요리명만 추출하세요.
 
-규칙:
-- 숫자, 날짜, 에피소드 번호는 제거
-- 수식어(맛있는, 간단한 등)는 제거
-- 조리 방법(만드는법, 레시피 등)은 제거
-- 순수 요리 이름만 출력
+제거할 것:
+- 숫자, 날짜, 에피소드 번호
+- 수식어(맛있는, 간단한, 아삭한, 입맛돋구는 등)
+- 조리방법 관련 단어(만드는법, 레시피, 만들기, 황금레시피 등)
+- 특수문자(!,.,.. 등)
 
 예시:
-[176.오트밀과일빵(2025.11.7)] -> 오트밀과일빵
-[[만개백과] EP. 18 가끔 생각나는 야채샐러드빵] -> 야채샐러드빵
-[에어프라이어 요리 양파햄치즈빵 만드는 법 너무 맛있잖아] -> 양파햄치즈빵
-[아삭한 콩나물무침 레시피 만들기] -> 콩나물무침
+입력: [176.오트밀과일빵(2025.11.7)]
+출력: 오트밀과일빵
+
+입력: [[만개백과] EP. 18 가끔 생각나는 야채샐러드빵]
+출력: 야채샐러드빵
+
+입력: [에어프라이어 요리 양파햄치즈빵 만드는 법 너무 맛있잖아]
+출력: 양파햄치즈빵
+
+입력: [아삭한 콩나물무침 레시피 만들기]
+출력: 콩나물무침
+
+입력: [입맛 돋구는 양파덮밥 레시피!]
+출력: 양파덮밥
 
 입력: [{raw_name}]
 출력:"""
 
         try:
-            # Gemini API 호출
-            response = self.gemini_client.models.generate_content(
-                model='gemini-2.0-flash-exp',
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    max_output_tokens=15,
-                    temperature=0.0,  # 완전 결정론적
-                )
+            # OpenAI API 호출
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "당신은 요리 명칭 정제 전문가입니다. 핵심 요리명만 추출하고, 수식어와 조리방법 관련 단어는 모두 제거합니다."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=20,
+                temperature=0.0,
             )
             
-            refined = response.text.strip()
+            refined = response.choices[0].message.content.strip()
             
-            # 후처리: 불필요한 텍스트 제거
-            refined = re.sub(r'출력:|결과:|->|:|\*|```', '', refined).strip()
+            # 후처리: 불필요한 텍스트 및 특수문자 제거
+            refined = re.sub(r'출력:|결과:|->|:|\*|```|!|\.|…', '', refined).strip()
             refined = refined.split('\n')[0].strip()
+            
+            # 추가 정제: 남은 불필요한 단어 제거
+            noise_words = ['레시피', '만들기', '만드는법', '황금레시피']
+            for word in noise_words:
+                refined = refined.replace(word, '').strip()
             
             # 검증: 결과가 유효한지 확인
             if refined and len(refined) >= 2 and not refined.isdigit():
-                print(f"✅ Gemini 정제: '{raw_name}' -> '{refined}'")
+                print(f"✅ OpenAI 정제: '{raw_name}' -> '{refined}'")
                 return refined
             else:
-                print(f"⚠️ Gemini 결과 불량: '{refined}' -> 규칙 기반으로 대체")
+                print(f"⚠️ OpenAI 결과 불량: '{refined}' -> 규칙 기반으로 대체")
                 return self.clean_recipe_name(raw_name)
             
         except Exception as e:
-            print(f"⚠️ Gemini API 오류: {e}")
+            print(f"⚠️ OpenAI API 오류: {e}")
             print(f"   '{raw_name}' -> 규칙 기반 처리")
             return self.clean_recipe_name(raw_name)
 
@@ -218,7 +233,7 @@ class RecipeSearcher:
             if len(hybrid_results) == n_results:
                 break
         
-        # 반환 직전 최종 5개에 대해서만 Gemini LLM 정제 수행
+        # 반환 직전 최종 5개에 대해서만 OpenAI LLM 정제 수행
         print("🪄 유튜브 검색 최적화를 위해 요리명을 정제 중입니다...")
         for res in hybrid_results:
             res['name'] = self.clean_with_llm(res['original_name'])
@@ -228,7 +243,7 @@ class RecipeSearcher:
 # --- 테스트 및 통합용 출력 코드 ---
 if __name__ == "__main__":
     searcher = RecipeSearcher()
-    ocr_output = ["콩나물", "마늘", "대파"]
+    ocr_output = ["감자", "당근", "애호박", "돼지고기"]
     
     print(f"\n🛒 [자취생 모드] 인식된 식재료: {ocr_output}")
     print("🚀 중복 없는 고도화된 검색을 시작합니다...\n")
