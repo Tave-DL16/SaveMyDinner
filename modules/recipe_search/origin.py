@@ -24,7 +24,10 @@ from typing import Optional, List, Dict
 from dotenv import load_dotenv
 
 from youtube_transcript_api import YouTubeTranscriptApi
-from openai import OpenAI
+
+# ✅ new SDK (google.genai)
+from google import genai
+from google.genai import types
 
 load_dotenv()
 
@@ -233,20 +236,20 @@ def extract_subtitles(video_id: str, video_url: str) -> Optional[str]:
 
 
 # -----------------------------
-# 3) OpenAI parsing
+# 3) Gemini parsing (google.genai)
 # -----------------------------
-def parse_recipe_with_openai(dish_name: str, subtitle_text: str) -> dict:
+def parse_recipe_with_gemini(dish_name: str, subtitle_text: str) -> dict:
     """
-    자막에서 레시피 추출 (OpenAI 사용)
+    자막에서 레시피 추출
 
     Returns:
         {"ingredients": [...], "steps": [...]}
     """
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not api_key:
-        raise ValueError("OPENAI_API_KEY 환경 변수 설정 필요")
+        raise ValueError("GEMINI_API_KEY 또는 GOOGLE_API_KEY 환경 변수 설정 필요")
 
-    client = OpenAI(api_key=api_key)
+    client = genai.Client(api_key=api_key)
 
     prompt = f"""다음은 "{dish_name}" 요리 영상의 자막입니다. 이 자막을 분석하여 레시피를 추출해주세요.
 
@@ -271,16 +274,15 @@ def parse_recipe_with_openai(dish_name: str, subtitle_text: str) -> dict:
 - 분량이 언급되지 않은 재료는 "적당량"으로 표기하세요.
 """
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "당신은 요리 레시피를 추출하는 전문가입니다."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.2
+    resp = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            temperature=0.2,
+        ),
     )
 
-    response_text = (response.choices[0].message.content or "").strip()
+    response_text = (resp.text or "").strip()
 
     # ---- 파싱 ----
     ingredients: List[str] = []
@@ -348,7 +350,7 @@ def get_recipe_from_youtube(dish_name: str, num_results: int = 3) -> dict:
         if not subtitle_text:
             continue
 
-        recipe_data = parse_recipe_with_openai(dish_name, subtitle_text)
+        recipe_data = parse_recipe_with_gemini(dish_name, subtitle_text)
 
         # 재료/단계가 너무 비었으면 스킵 (원하면 조건 완화)
         if not recipe_data.get("ingredients") and not recipe_data.get("steps"):
