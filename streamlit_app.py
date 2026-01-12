@@ -36,6 +36,7 @@ def init_state() -> None:
         "dish_candidates": [],
         "selected_dish": None,
         "final_result": None,
+        "selected_recipe_index": None,  # Step 4에서 선택한 레시피 인덱스
 
         # Step3 widget states (중요: 사이드바 즉시 반영용)
         "dish_radio": None,  # 추천 목록 선택값
@@ -448,7 +449,8 @@ def render_sidebar() -> None:
             ("📸", "사진 업로드"),
             ("🥕", "재료 확인"),
             ("🍳", "요리 선택"),
-            ("📱", "추천 결과"),
+            ("📋", "레시피 선택"),
+            ("📱", "레시피 상세"),
         ]
 
         for i, (icon, label) in enumerate(steps, 1):
@@ -484,8 +486,8 @@ def render_progress() -> None:
     상단 진행 바(Progress Bar)를 렌더링하는 함수
     """
     step = st.session_state.step
-    st.progress((step - 1) / 3)
-    labels = {1: "사진 업로드", 2: "재료 확인", 3: "요리 선택", 4: "추천 결과"}
+    st.progress((step - 1) / 4)
+    labels = {1: "사진 업로드", 2: "재료 확인", 3: "요리 선택", 4: "레시피 선택", 5: "레시피 상세"}
     st.subheader(f"STEP {step}. {labels[step]}")
 
 
@@ -784,12 +786,12 @@ def step3_choose_dish() -> None:
 
 
 # -----------------------------
-# Step 4: Results
+# Step 4: Recipe Selection
 # -----------------------------
-def render_link_card(title: str, subtitle: str, url: str, index: int) -> None:
+def render_recipe_card(title: str, subtitle: str, index: int, ingredients: List[str], steps: List[str]) -> None:
     """
-    개별 유튜브 영상 링크 카드를 생성하는 함수
-    Input: title, subtitle, url, index
+    개별 레시피 카드를 생성하는 함수
+    Input: title, subtitle, index, ingredients, steps
     """
     with st.container(border=True):
         rank_emoji = ["🥇", "🥈", "🥉"][index] if index < 3 else "📌"
@@ -799,8 +801,21 @@ def render_link_card(title: str, subtitle: str, url: str, index: int) -> None:
             st.caption(f"🍛 {subtitle}")
 
         st.write("")
-        st.link_button("🎬 영상 보러가기", url, use_container_width=True)
-        st.caption("💡 새 탭에서 열립니다")
+
+        # 재료와 단계 개수 표시
+        col1, col2 = st.columns(2)
+        with col1:
+            st.caption(f"🥕 재료: {len(ingredients)}개")
+        with col2:
+            st.caption(f"📝 단계: {len(steps)}개")
+
+        st.write("")
+
+        # 레시피 보기 버튼
+        if st.button("📖 레시피 보기", key=f"recipe_btn_{index}", use_container_width=True):
+            st.session_state.selected_recipe_index = index
+            go_step(5)
+            st.rerun()
 
 
 def render_retry_buttons(dish: str) -> None:
@@ -840,16 +855,16 @@ def render_navigation_buttons() -> None:
             st.rerun()
 
 
-def step4_results() -> None:
+def step4_recipe_selection() -> None:
     """
-    [STEP 4] 최종 결과(유튜브 레시피 링크) 화면을 렌더링하는 함수
+    [STEP 4] 레시피 선택 화면 - 유튜브 레시피 목록을 보여주고 하나를 선택
     Output: None (UI Render)
     """
     dish = st.session_state.selected_dish
     result = st.session_state.final_result or {}
 
     st.markdown(f"### 🎉 선택한 요리: **{dish}**")
-    st.caption("AI가 선별한 최고의 레시피 영상을 확인해보세요!")
+    st.caption("AI가 선별한 최고의 레시피를 확인해보세요! 원하는 레시피를 선택하면 상세 정보를 볼 수 있어요.")
     st.divider()
 
     if st.session_state.links_failed or not result:
@@ -857,12 +872,12 @@ def step4_results() -> None:
         render_retry_buttons(dish)
         st.divider()
 
-    st.subheader("🎬 추천 레시피 영상")
+    st.subheader("🎬 추천 레시피")
 
     youtube_list = (result.get("youtube") or [])[:3]
 
     if not youtube_list:
-        st.info("😥 표시할 레시피 영상이 없어요")
+        st.info("😥 표시할 레시피가 없어요")
         with st.expander("💡 이럴 때는?"):
             st.write(
                 """
@@ -882,17 +897,108 @@ def step4_results() -> None:
                 item = youtube_list[i]
                 title = item.get("title", "제목 없음")
                 channel = item.get("channel", "")
-                url = item.get("url", "")
-                if url:
-                    render_link_card(title, channel, url, i)
-                else:
-                    with st.container(border=True):
-                        st.markdown(f"**{title}**")
-                        st.caption("⚠️ 링크가 없어요")
+                ingredients = item.get("ingredients", [])
+                steps = item.get("steps", [])
+
+                render_recipe_card(title, channel, i, ingredients, steps)
 
     st.divider()
     st.write("")
     render_navigation_buttons()
+
+
+# -----------------------------
+# Step 5: Recipe Detail
+# -----------------------------
+def step5_recipe_detail() -> None:
+    """
+    [STEP 5] 선택된 레시피의 상세 정보를 표시하는 화면
+    Output: None (UI Render)
+    """
+    dish = st.session_state.selected_dish
+    result = st.session_state.final_result or {}
+    youtube_list = result.get("youtube") or []
+    selected_index = st.session_state.selected_recipe_index
+
+    if selected_index is None or selected_index >= len(youtube_list):
+        st.error("레시피 정보를 찾을 수 없어요")
+        if st.button("⬅️ 돌아가기", use_container_width=True):
+            go_step(4)
+            st.rerun()
+        return
+
+    recipe = youtube_list[selected_index]
+    title = recipe.get("title", "제목 없음")
+    url = recipe.get("url", "")
+    ingredients = recipe.get("ingredients", [])
+    steps = recipe.get("steps", [])
+
+    # 헤더
+    rank_emoji = ["🥇", "🥈", "🥉"][selected_index] if selected_index < 3 else "📌"
+    st.markdown(f"# {rank_emoji} {title}")
+    st.caption(f"🍽️ {dish}")
+    st.divider()
+
+    # 현재 선택된 재료 표시
+    if st.session_state.ingredients:
+        st.markdown("### 🥕 냉장고 재료")
+        with st.container(border=True):
+            # 재료를 3열로 표시
+            ingredient_cols = st.columns(3)
+            for idx, ing in enumerate(st.session_state.ingredients):
+                with ingredient_cols[idx % 3]:
+                    st.markdown(f"✓ {ing}")
+        st.divider()
+
+    # 레시피 재료
+    st.markdown("### 🛒 필요한 재료")
+    if ingredients:
+        with st.container(border=True):
+            for ing in ingredients:
+                st.markdown(f"• {ing}")
+    else:
+        st.info("재료 정보가 없어요")
+
+    st.divider()
+
+    # 조리 단계
+    st.markdown("### 👨‍🍳 조리 단계")
+    if steps:
+        with st.container(border=True):
+            for step in steps:
+                st.markdown(f"{step}")
+                st.write("")
+    else:
+        st.info("조리 단계 정보가 없어요")
+
+    st.divider()
+
+    # 영상 링크
+    st.markdown("### 🎬 영상으로 보기")
+    if url:
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.link_button("📺 YouTube 영상 보러가기", url, use_container_width=True)
+            st.caption("💡 새 탭에서 열립니다")
+    else:
+        st.info("영상 링크가 없어요")
+
+    st.divider()
+
+    # 네비게이션 버튼
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        if st.button("⬅️ 다른 레시피 보기", use_container_width=True):
+            st.session_state.selected_recipe_index = None
+            go_step(4)
+            st.rerun()
+
+    with col3:
+        if st.button("🏠 처음으로", use_container_width=True):
+            reset_all()
+            init_state()
+            st.rerun()
 
 
 # -----------------------------
@@ -933,7 +1039,8 @@ def main() -> None:
         1: step1_upload,
         2: step2_ingredients,
         3: step3_choose_dish,
-        4: step4_results,
+        4: step4_recipe_selection,
+        5: step5_recipe_detail,
     }
 
     current_step = st.session_state.step
