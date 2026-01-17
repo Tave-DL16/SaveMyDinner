@@ -6,7 +6,7 @@
 
 ## 🏗️ 시스템 아키텍처
 
-본 프로젝트는 지연 시간을 최소화하고 고성능 AI 추론을 위해 **Client (Streamlit)**와 **Inference Server (FastAPI)**로 분리된 아키텍처를 채택하고 있습니다.
+본 프로젝트는 지연 시간을 최소화하고 고성능 AI 추론을 위해 Client (Streamlit)와 Inference Server (FastAPI)로 분리된 아키텍처를 채택하고 있습니다.
 
 ### 🎨 전체 파이프라인 (Pipeline)
 
