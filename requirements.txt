@@ -1,0 +1,32 @@
+# OCR & 이미지 처리
+ultralytics
+paddlepaddle==3.2.2 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/\
+paddleocr
+opencv-python
+Pillow
+numpy
+accelerate
+
+# LLM & ML
+torch
+transformers
+sentence-transformers
+
+# VectorDB
+chromadb
+
+# API & 검색
+openai
+python-dotenv
+google-api-python-client
+youtube_transcript_api
+
+
+# Youtube
+yt-dlp>=2024.1.0
+youtube-transcript-api>=0.6.1
+google-generativeai>=0.8.0
+
+# UI
+streamlit
+
